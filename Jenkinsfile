@@ -52,7 +52,7 @@ pipeline {
             steps {
                 sh '''
                     docker build \
-                      -t ${DOCKERHUB_REPO}:${BUILD_NUMBER} \
+                      -t ${DOCKERHUB_REPO}:ci-${BUILD_NUMBER} \
                       -t ${DOCKERHUB_REPO}:latest .
                 '''
             }
@@ -66,7 +66,7 @@ pipeline {
                       --severity HIGH,CRITICAL \
                       --exit-code 1 \
                       --no-progress \
-                      ${DOCKERHUB_REPO}:${BUILD_NUMBER}
+                      ${DOCKERHUB_REPO}:ci-${BUILD_NUMBER}
                 '''
             }
         }
@@ -83,7 +83,7 @@ pipeline {
                         echo "$DOCKER_PASS" | docker login \
                           -u "$DOCKER_USER" --password-stdin
 
-                        docker push ${DOCKERHUB_REPO}:${BUILD_NUMBER}
+                        docker push ${DOCKERHUB_REPO}:ci-${BUILD_NUMBER}
                         docker push ${DOCKERHUB_REPO}:latest
 
                         docker logout
