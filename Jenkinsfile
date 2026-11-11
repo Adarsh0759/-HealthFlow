@@ -8,8 +8,6 @@ pipeline {
 
     environment {
         DOCKERHUB_REPO = 'adarshinfinia/healthflow'
-        KUBECONFIG = '/var/lib/jenkins/.kube/jenkins-deployer.kubeconfig'
-        K8S_NAMESPACE = 'healthflow'
     }
 
     stages {
@@ -19,11 +17,33 @@ pipeline {
             }
         }
 
+        stage('Secret Scan - Gitleaks') {
+            steps {
+                sh '''
+                    gitleaks detect --source . --redact --exit-code 1
+                '''
+            }
+        }
+
+        stage('Trivy Filesystem Scan') {
+            steps {
+                sh '''
+                    trivy fs \
+                      --scanners vuln,misconfig \
+                      --severity HIGH,CRITICAL \
+                      --ignorefile .trivyignore \
+                      --exit-code 1 \
+                      --no-progress .
+                '''
+            }
+        }
+
         stage('Install Dependencies and Test') {
             steps {
                 sh '''
                     npm ci
                     npm test
+                    npm audit --audit-level=high
                 '''
             }
         }
@@ -34,6 +54,19 @@ pipeline {
                     docker build \
                       -t ${DOCKERHUB_REPO}:${BUILD_NUMBER} \
                       -t ${DOCKERHUB_REPO}:latest .
+                '''
+            }
+        }
+
+        stage('Trivy Docker Image Scan') {
+            steps {
+                sh '''
+                    trivy image \
+                      --scanners vuln \
+                      --severity HIGH,CRITICAL \
+                      --exit-code 1 \
+                      --no-progress \
+                      ${DOCKERHUB_REPO}:${BUILD_NUMBER}
                 '''
             }
         }
@@ -59,32 +92,7 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes') {
-            steps {
-                sh '''
-                    kubectl apply -f k8s/deployment.yaml
-                    kubectl apply -f k8s/service.yaml
-                    kubectl apply -f k8s/ingress.yaml
 
-                    kubectl set image deployment/healthflow \
-                      healthflow=${DOCKERHUB_REPO}:${BUILD_NUMBER} \
-                      -n ${K8S_NAMESPACE}
-
-                    kubectl rollout status deployment/healthflow \
-                      -n ${K8S_NAMESPACE} --timeout=120s
-                '''
-            }
-        }
-
-        stage('Verify Deployment') {
-            steps {
-                sh '''
-                    kubectl get pods -n ${K8S_NAMESPACE}
-                    kubectl get services -n ${K8S_NAMESPACE}
-                    kubectl get ingress -n ${K8S_NAMESPACE}
-                '''
-            }
-        }
     }
 
     post {

@@ -1,0 +1,4 @@
+# Accepted exception: KSV-0056
+# Jenkins must patch only Service/healthflow for Blue-Green traffic switching.
+# See SECURITY-EXCEPTIONS.md
+KSV-0056

@@ -13,8 +13,19 @@ spec:
       labels:
         app: healthflow
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: healthflow
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           image: nginx:alpine
           ports:
             - containerPort: 3000
