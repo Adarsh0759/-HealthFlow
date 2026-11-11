@@ -16,7 +16,7 @@ pipeline {
     }
 
     environment {
-        KUBECONFIG = '/var/lib/jenkins/.kube/config'
+        KUBECONFIG = '/var/lib/jenkins/.kube/jenkins-deployer.kubeconfig'
         K8S_NAMESPACE = 'healthflow'
     }
 

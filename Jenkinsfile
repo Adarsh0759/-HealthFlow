@@ -8,7 +8,7 @@ pipeline {
 
     environment {
         DOCKERHUB_REPO = 'adarshinfinia/healthflow'
-        KUBECONFIG = '/var/lib/jenkins/.kube/config'
+        KUBECONFIG = '/var/lib/jenkins/.kube/jenkins-deployer.kubeconfig'
         K8S_NAMESPACE = 'healthflow'
     }
 
@@ -62,7 +62,6 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                    kubectl apply -f k8s/namespace.yaml
                     kubectl apply -f k8s/deployment.yaml
                     kubectl apply -f k8s/service.yaml
                     kubectl apply -f k8s/ingress.yaml
