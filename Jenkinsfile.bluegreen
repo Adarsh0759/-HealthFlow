@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -5,7 +6,7 @@ pipeline {
         choice(
             name: 'TARGET_COLOR',
             choices: ['green', 'blue'],
-            description: 'Select the environment to deploy and activate'
+            description: 'Environment to activate'
         )
     }
 
@@ -17,31 +18,34 @@ pipeline {
     environment {
         KUBECONFIG = '/var/lib/jenkins/.kube/config'
         K8S_NAMESPACE = 'healthflow'
-        PREVIOUS_COLOR = ''
     }
 
     stages {
         stage('Identify Current Environment') {
             steps {
                 script {
+                    env.TARGET_COLOR = params.TARGET_COLOR
+
                     env.PREVIOUS_COLOR = sh(
                         script: "kubectl get service healthflow -n healthflow -o jsonpath='{.spec.selector.slot}'",
                         returnStdout: true
                     ).trim()
 
-                    echo "Currently active environment: ${env.PREVIOUS_COLOR}"
-                    echo "Requested environment: ${params.TARGET_COLOR}"
-
-                    if (!(params.TARGET_COLOR in ['blue', 'green'])) {
-                        error('Invalid deployment environment')
+                    if (!(env.PREVIOUS_COLOR in ['blue', 'green'])) {
+                        error("Invalid current Service selector: ${env.PREVIOUS_COLOR}")
                     }
 
-                    if (params.TARGET_COLOR == 'blue') {
+                    echo "Current environment: ${env.PREVIOUS_COLOR}"
+                    echo "Target environment: ${env.TARGET_COLOR}"
+
+                    if (env.TARGET_COLOR == 'blue') {
                         env.TARGET_IMAGE = 'adarshinfinia/healthflow:1'
                         env.EXPECTED_VERSION = '1.0.0'
-                    } else {
+                    } else if (env.TARGET_COLOR == 'green') {
                         env.TARGET_IMAGE = 'adarshinfinia/healthflow:2'
                         env.EXPECTED_VERSION = '2.0.0'
+                    } else {
+                        error('Invalid target environment')
                     }
                 }
             }
@@ -74,8 +78,6 @@ pipeline {
         stage('Smoke Test') {
             steps {
                 sh '''
-                    sleep 3
-
                     RESPONSE=$(curl -fsS --max-time 15 http://localhost/)
 
                     echo "Application response: $RESPONSE"
@@ -99,14 +101,12 @@ pipeline {
     }
 
     post {
-        success {
-            echo "Successfully activated ${params.TARGET_COLOR} environment."
-        }
-
         failure {
             script {
-                if (env.PREVIOUS_COLOR?.trim()) {
-                    echo "Deployment failed. Restoring ${env.PREVIOUS_COLOR} traffic."
+                if (env.PREVIOUS_COLOR?.trim() &&
+                    env.PREVIOUS_COLOR in ['blue', 'green']) {
+
+                    echo "Restoring traffic to ${env.PREVIOUS_COLOR}"
 
                     sh '''
                         kubectl patch service healthflow \
@@ -116,6 +116,10 @@ pipeline {
                     '''
                 }
             }
+        }
+
+        success {
+            echo "Blue-Green deployment completed successfully!"
         }
     }
 }
