@@ -1,0 +1,121 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'TARGET_COLOR',
+            choices: ['green', 'blue'],
+            description: 'Select the environment to deploy and activate'
+        )
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        KUBECONFIG = '/var/lib/jenkins/.kube/config'
+        K8S_NAMESPACE = 'healthflow'
+        PREVIOUS_COLOR = ''
+    }
+
+    stages {
+        stage('Identify Current Environment') {
+            steps {
+                script {
+                    env.PREVIOUS_COLOR = sh(
+                        script: "kubectl get service healthflow -n healthflow -o jsonpath='{.spec.selector.slot}'",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Currently active environment: ${env.PREVIOUS_COLOR}"
+                    echo "Requested environment: ${params.TARGET_COLOR}"
+
+                    if (!(params.TARGET_COLOR in ['blue', 'green'])) {
+                        error('Invalid deployment environment')
+                    }
+
+                    if (params.TARGET_COLOR == 'blue') {
+                        env.TARGET_IMAGE = 'adarshinfinia/healthflow:1'
+                        env.EXPECTED_VERSION = '1.0.0'
+                    } else {
+                        env.TARGET_IMAGE = 'adarshinfinia/healthflow:2'
+                        env.EXPECTED_VERSION = '2.0.0'
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Selected Environment') {
+            steps {
+                sh '''
+                    kubectl set image deployment/healthflow-${TARGET_COLOR} \
+                      healthflow=${TARGET_IMAGE} \
+                      -n ${K8S_NAMESPACE}
+
+                    kubectl rollout status deployment/healthflow-${TARGET_COLOR} \
+                      -n ${K8S_NAMESPACE} --timeout=120s
+                '''
+            }
+        }
+
+        stage('Switch Traffic') {
+            steps {
+                sh '''
+                    kubectl patch service healthflow \
+                      -n ${K8S_NAMESPACE} \
+                      --type merge \
+                      -p '{"spec":{"selector":{"app":"healthflow","slot":"'${TARGET_COLOR}'"}}}'
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                sh '''
+                    sleep 3
+
+                    RESPONSE=$(curl -fsS --max-time 15 http://localhost/)
+
+                    echo "Application response: $RESPONSE"
+
+                    echo "$RESPONSE" | grep -F '"version":"'${EXPECTED_VERSION}'"'
+
+                    curl -fsS --max-time 15 http://localhost/health
+                '''
+            }
+        }
+
+        stage('Deployment Verification') {
+            steps {
+                sh '''
+                    kubectl get deployments -n ${K8S_NAMESPACE}
+                    kubectl get pods -n ${K8S_NAMESPACE}
+                    kubectl get service healthflow -n ${K8S_NAMESPACE}
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Successfully activated ${params.TARGET_COLOR} environment."
+        }
+
+        failure {
+            script {
+                if (env.PREVIOUS_COLOR?.trim()) {
+                    echo "Deployment failed. Restoring ${env.PREVIOUS_COLOR} traffic."
+
+                    sh '''
+                        kubectl patch service healthflow \
+                          -n ${K8S_NAMESPACE} \
+                          --type merge \
+                          -p '{"spec":{"selector":{"app":"healthflow","slot":"'${PREVIOUS_COLOR}'"}}}'
+                    '''
+                }
+            }
+        }
+    }
+}
