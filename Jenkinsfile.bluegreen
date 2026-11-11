@@ -42,7 +42,7 @@ pipeline {
                         env.TARGET_IMAGE = 'adarshinfinia/healthflow:3'
                         env.EXPECTED_VERSION = '2.0.0'
                     } else if (env.TARGET_COLOR == 'green') {
-                        env.TARGET_IMAGE = 'adarshinfinia/healthflow:2'
+                        env.TARGET_IMAGE = 'adarshinfinia/healthflow:green-original-v2'
                         env.EXPECTED_VERSION = '2.0.0'
                     } else {
                         error('Invalid target environment')
