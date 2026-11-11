@@ -39,8 +39,8 @@ pipeline {
                     echo "Target environment: ${env.TARGET_COLOR}"
 
                     if (env.TARGET_COLOR == 'blue') {
-                        env.TARGET_IMAGE = 'adarshinfinia/healthflow:1'
-                        env.EXPECTED_VERSION = '1.0.0'
+                        env.TARGET_IMAGE = 'adarshinfinia/healthflow:3'
+                        env.EXPECTED_VERSION = '2.0.0'
                     } else if (env.TARGET_COLOR == 'green') {
                         env.TARGET_IMAGE = 'adarshinfinia/healthflow:2'
                         env.EXPECTED_VERSION = '2.0.0'
