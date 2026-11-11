@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: healthflow
-          image: adarshinfinia/healthflow:green-original-v2
+          image: adarshinfinia/healthflow:green-v2
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
