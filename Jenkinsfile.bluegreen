@@ -1,12 +1,17 @@
-
 pipeline {
     agent any
 
     parameters {
         choice(
             name: 'TARGET_COLOR',
-            choices: ['green', 'blue'],
-            description: 'Environment to activate'
+            choices: ['auto', 'green', 'blue'],
+            description: 'auto selects the inactive environment'
+        )
+
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: '',
+            description: 'Docker image tag from CI, e.g. ci-6. Leave empty for existing image.'
         )
     }
 
@@ -18,16 +23,16 @@ pipeline {
     environment {
         KUBECONFIG = '/var/lib/jenkins/.kube/jenkins-deployer.kubeconfig'
         K8S_NAMESPACE = 'healthflow'
+        DOCKERHUB_REPO = 'adarshinfinia/healthflow'
+        EXPECTED_VERSION = '2.0.0'
     }
 
     stages {
         stage('Identify Current Environment') {
             steps {
                 script {
-                    env.TARGET_COLOR = params.TARGET_COLOR
-
                     env.PREVIOUS_COLOR = sh(
-                        script: "kubectl get service healthflow -n healthflow -o jsonpath='{.spec.selector.slot}'",
+                        script: "kubectl get service healthflow -n ${K8S_NAMESPACE} -o jsonpath='{.spec.selector.slot}'",
                         returnStdout: true
                     ).trim()
 
@@ -35,36 +40,77 @@ pipeline {
                         error("Invalid current Service selector: ${env.PREVIOUS_COLOR}")
                     }
 
+                    if (params.TARGET_COLOR == 'auto') {
+                        env.TARGET_COLOR = env.PREVIOUS_COLOR == 'blue' ? 'green' : 'blue'
+                    } else {
+                        env.TARGET_COLOR = params.TARGET_COLOR
+                    }
+
+                    if (env.TARGET_COLOR == env.PREVIOUS_COLOR) {
+                        error("Target ${env.TARGET_COLOR} is already active. Select the inactive environment.")
+                    }
+
+                    if (params.IMAGE_TAG?.trim()) {
+                        if (!(params.IMAGE_TAG ==~ /^ci-[0-9]+$/)) {
+                            error('Invalid IMAGE_TAG. Expected format: ci-N')
+                        }
+
+                        env.TARGET_IMAGE = "${env.DOCKERHUB_REPO}:${params.IMAGE_TAG}"
+                    }
+
                     echo "Current environment: ${env.PREVIOUS_COLOR}"
                     echo "Target environment: ${env.TARGET_COLOR}"
-
-                    if (env.TARGET_COLOR == 'blue') {
-                        env.TARGET_IMAGE = 'adarshinfinia/healthflow:3'
-                        env.EXPECTED_VERSION = '2.0.0'
-                    } else if (env.TARGET_COLOR == 'green') {
-                        env.TARGET_IMAGE = 'adarshinfinia/healthflow:green-v2'
-                        env.EXPECTED_VERSION = '2.0.0'
-                    } else {
-                        error('Invalid target environment')
-                    }
+                    echo "Image to deploy: ${env.TARGET_IMAGE ?: 'Existing image'}"
                 }
             }
         }
 
-        stage('Deploy Selected Environment') {
+        stage('Deploy Inactive Environment') {
             steps {
-                sh '''
-                    kubectl set image deployment/healthflow-${TARGET_COLOR} \
-                      healthflow=${TARGET_IMAGE} \
-                      -n ${K8S_NAMESPACE}
+                script {
+                    if (env.TARGET_IMAGE?.trim()) {
+                        sh '''
+                            kubectl set image deployment/healthflow-${TARGET_COLOR} \
+                              healthflow=${TARGET_IMAGE} \
+                              -n ${K8S_NAMESPACE}
+                        '''
+                    } else {
+                        echo 'No new image supplied. Keeping the existing image.'
+                    }
+                }
 
+                sh '''
                     kubectl rollout status deployment/healthflow-${TARGET_COLOR} \
-                      -n ${K8S_NAMESPACE} --timeout=120s
+                      -n ${K8S_NAMESPACE} --timeout=180s
                 '''
             }
         }
 
-        stage('Switch Traffic') {
+        stage('Verify Inactive Environment') {
+            steps {
+                sh '''
+                    kubectl get deployment healthflow-${TARGET_COLOR} \
+                      -n ${K8S_NAMESPACE}
+
+                    kubectl get pods \
+                      -n ${K8S_NAMESPACE} \
+                      -l app=healthflow,slot=${TARGET_COLOR}
+                '''
+            }
+        }
+
+        stage('Approval Before Traffic Switch') {
+            steps {
+                timeout(time: 15, unit: 'MINUTES') {
+                    input(
+                        message: "Approve deployment of ${TARGET_COLOR} (${TARGET_IMAGE ?: 'existing image'})? Current production is ${PREVIOUS_COLOR}.",
+                        ok: 'Approve Traffic Switch'
+                    )
+                }
+            }
+        }
+
+        stage('Switch Production Traffic') {
             steps {
                 sh '''
                     kubectl patch service healthflow \
@@ -75,16 +121,17 @@ pipeline {
             }
         }
 
-        stage('Smoke Test') {
+        stage('Production Smoke Test') {
             steps {
                 sh '''
-                    RESPONSE=$(curl -fsS --max-time 15 http://localhost/)
+                    RESPONSE=$(curl -fsS --max-time 20 http://localhost/)
 
                     echo "Application response: $RESPONSE"
 
                     echo "$RESPONSE" | grep -F '"version":"'${EXPECTED_VERSION}'"'
 
-                    curl -fsS --max-time 15 http://localhost/health
+                    echo "Health endpoint:"
+                    curl -fsS --max-time 20 http://localhost/health
                 '''
             }
         }
@@ -92,9 +139,18 @@ pipeline {
         stage('Deployment Verification') {
             steps {
                 sh '''
+                    echo "Deployments:"
                     kubectl get deployments -n ${K8S_NAMESPACE}
+
+                    echo "Pods:"
                     kubectl get pods -n ${K8S_NAMESPACE}
+
+                    echo "Production Service:"
                     kubectl get service healthflow -n ${K8S_NAMESPACE}
+
+                    echo "Active slot:"
+                    kubectl get service healthflow -n ${K8S_NAMESPACE} \
+                      -o jsonpath='{.spec.selector.slot}{"\\n"}'
                 '''
             }
         }
@@ -106,7 +162,7 @@ pipeline {
                 if (env.PREVIOUS_COLOR?.trim() &&
                     env.PREVIOUS_COLOR in ['blue', 'green']) {
 
-                    echo "Restoring traffic to ${env.PREVIOUS_COLOR}"
+                    echo "Restoring production traffic to ${env.PREVIOUS_COLOR}"
 
                     sh '''
                         kubectl patch service healthflow \

@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -80,6 +81,7 @@ pipeline {
                 )]) {
                     sh '''
                         set +x
+
                         echo "$DOCKER_PASS" | docker login \
                           -u "$DOCKER_USER" --password-stdin
 
@@ -91,16 +93,22 @@ pipeline {
                 }
             }
         }
-
-
     }
 
     post {
         success {
-            echo 'HealthFlow CI/CD pipeline completed successfully!'
+            echo 'HealthFlow CI pipeline completed successfully!'
+
+            build job: 'HealthFlow-BlueGreen',
+                wait: false,
+                parameters: [
+                    string(name: 'TARGET_COLOR', value: 'auto'),
+                    string(name: 'IMAGE_TAG', value: "ci-${env.BUILD_NUMBER}")
+                ]
         }
+
         failure {
-            echo 'HealthFlow CI/CD pipeline failed. Check the stage logs.'
+            echo 'HealthFlow CI pipeline failed. Deployment will not be triggered.'
         }
     }
 }
